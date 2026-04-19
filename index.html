@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Flexi Admin | Real-Time Gemini</title>
+    <link href="./quill.snow.css" rel="stylesheet">
+    <style>
+        :root { --blue: #003366; --green: #2E8B57; --red: #cc0000; --gold: #fff9c4; }
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: sans-serif; background: #f4f4f4; padding-bottom: 110px; overflow-x: hidden; }
+        header { background: var(--blue); color: #fff; padding: 15px; border-bottom: 4px solid var(--green); position: sticky; top: 0; z-index: 1000; }
+        .container { width: 100%; max-width: 600px; margin: auto; padding: 10px; }
+        .meta-grid { display: flex; gap: 10px; margin-bottom: 20px; }
+        .meta-grid input { flex: 1; padding: 12px; border: 2px solid #ddd; border-radius: 8px; outline: none; font-weight: bold; }
+        .q-card { background: #fff; padding: 15px; border-radius: 12px; margin-bottom: 25px; border: 1px solid #ddd; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        .editor { height: 150px; width: 100%; background: #fff; }
+        .opt-container { margin-top: 15px; }
+        .opt { margin-bottom: 15px; background: #fafafa; padding: 10px; border-radius: 8px; border: 1px solid #eee; }
+        .opt-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .opt-editor { height: 80px; background: #fff; width: 100%; }
+        .selected-ans { border: 2px solid var(--green); background: #e8f5e9; }
+        .preview-box { margin-top: 15px; padding: 12px; border-radius: 8px; font-size: 0.85rem; border: 1px dashed #ccc; }
+        .q-preview { background: #fff; color: #333; }
+        .ai-preview { background: var(--gold); border-color: #fbc02d; color: #856404; margin-top: 5px; min-height: 40px; }
+        .label { font-size: 0.65rem; font-weight: bold; color: #999; text-transform: uppercase; display: block; margin-bottom: 4px; }
+        .ai-input-area { margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px; }
+        .ai-input-area textarea { width: 100%; height: 90px; border: 1px solid #ddd; border-radius: 8px; padding: 10px; font-family: inherit; font-size: 0.9rem; resize: none; }
+        .ai-gen-btn { background: #6200ee; color: white; border: none; padding: 8px 15px; border-radius: 5px; font-size: 0.75rem; cursor: pointer; float: right; margin-bottom: 10px; font-weight: bold; }
+        .ai-gen-btn:disabled { background: #ccc; }
+        button.main { padding: 15px; border: none; width: 100%; font-weight: bold; border-radius: 10px; cursor: pointer; }
+        .add { background: #fff; border: 2px solid var(--blue); color: var(--blue); margin-top: 10px; }
+        .save { background: var(--green); color: #fff; position: fixed; bottom: 0; left: 0; width: 100%; border-radius: 0; z-index: 1000; font-size: 1.1rem; }
+        .remove-text { color: var(--red); font-size: 0.75rem; font-weight: bold; cursor: pointer; float: right; }
+    </style>
+</head>
+<body>
+
+<header><b>FLEXI PRO | GEMINI REAL-TIME ADMIN</b></header>
+
+<div class="container">
+    <div class="meta-grid">
+        <input id="subject" placeholder="Subject (e.g. Physics)">
+        <input id="year" type="number" placeholder="Year">
+    </div>
+
+    <div id="list"></div>
+    <button class="main add" onclick="addQ()">+ ADD NEW QUESTION</button>
+</div>
+
+<button class="main save" onclick="saveExam()">PUBLISH TO DATABASE</button>
+
+<script src="./quill.js"></script>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getDatabase, ref, set } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-database.js";
+
+const app = initializeApp({
+    apiKey: "AIzaSyA0bM6pk1T1peGSS7quvFPEMOMuplnNRNM",
+    databaseURL: "https://waec2026jamb2027-default-rtdb.firebaseio.com",
+    projectId: "waec2026jamb2027"
+});
+
+const db = getDatabase(app);
+let editors = [];
+const GEMINI_API_KEY = "AIzaSyCHh7RaEA-HJROB9UHSevdb-vmQVnj5xZk"; 
+
+const quillToolbar = [['bold', 'italic', 'underline'], [{ 'script': 'sub'}, { 'script': 'super' }], ['image']];
+
+window.addQ = () => {
+    let id = Date.now();
+    let div = document.createElement('div');
+    div.className = 'q-card';
+    div.id = `card-${id}`;
+
+    div.innerHTML = `
+        <span class="remove-text" onclick="removeQ(${id})">REMOVE</span>
+        <b style="font-size:0.8rem; color:var(--blue)">QUESTION EDITOR</b>
+        <div id="e-${id}" class="editor"></div>
+
+        <div class="opt-container">
+            ${['A', 'B', 'C', 'D'].map(l => `
+                <div class="opt" id="opt${l}-${id}">
+                    <div class="opt-head">
+                        <b>Option ${l}</b>
+                        <span>Correct? <input type="radio" name="r${id}" value="${l}" onchange="mark(${id})"></span>
+                    </div>
+                    <div id="o${l}-${id}" class="opt-editor"></div>
+                </div>
+            `).join('')}
+        </div>
+
+        <div class="ai-input-area">
+            <button class="ai-gen-btn" id="btn-ai-${id}" onclick="askGemini(${id})">✨ ASK GEMINI AI</button>
+            <b style="font-size:0.75rem;">AI CORRECTION TEXT</b>
+            <textarea id="ai-${id}" oninput="updatePreview(${id})" placeholder="Gemini will explain the answer here..."></textarea>
+        </div>
+
+        <div class="preview-box q-preview"><span class="label">Question Preview</span><div id="pq-${id}">...</div></div>
+        <div class="preview-box ai-preview"><span class="label">AI Correction Preview</span><div id="pa-${id}">...</div></div>
+    `;
+
+    document.getElementById('list').appendChild(div);
+    
+    let q = new Quill(`#e-${id}`, { theme: 'snow', modules: { toolbar: quillToolbar } });
+    let optA = new Quill(`#oA-${id}`, { theme: 'snow', modules: { toolbar: quillToolbar } });
+    let optB = new Quill(`#oB-${id}`, { theme: 'snow', modules: { toolbar: quillToolbar } });
+    let optC = new Quill(`#oC-${id}`, { theme: 'snow', modules: { toolbar: quillToolbar } });
+    let optD = new Quill(`#oD-${id}`, { theme: 'snow', modules: { toolbar: quillToolbar } });
+
+    q.on('text-change', () => { document.getElementById(`pq-${id}`).innerHTML = q.root.innerHTML; });
+    editors.push({ id, q, optA, optB, optC, optD });
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+};
+
+window.askGemini = async (id) => {
+    const btn = document.getElementById(`btn-ai-${id}`);
+    const card = document.getElementById(`card-${id}`);
+    const correct = card.querySelector('input[type=radio]:checked');
+    const subject = document.getElementById('subject').value || "General Science";
+
+    if(!correct) return alert("Select the correct answer first!");
+
+    const editorObj = editors.find(e => e.id == id);
+    const questionText = editorObj.q.root.innerText;
+    const correctLetter = correct.value;
+    const correctText = editorObj['opt' + correctLetter].root.innerText;
+
+    btn.disabled = true;
+    btn.innerText = "THINKING...";
+
+    const prompt = `Explain why ${correctText} is the correct answer to: "${questionText}". Keep it under 3 sentences for high schoolers.`;
+
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`;
+        
+        const response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+
+        const data = await response.json();
+        
+        if (data.candidates && data.candidates[0].content.parts[0].text) {
+            document.getElementById(`ai-${id}`).value = data.candidates[0].content.parts[0].text;
+            updatePreview(id);
+        } else {
+            console.log("Gemini Error:", data);
+            alert("AI Error: Verify your API key is active and has no restrictions in AI Studio.");
+        }
+    } catch (err) {
+        alert("Network Error: Your browser blocked the request. Try running this on a hosted site (like Netlify or GitHub Pages) instead of local files.");
+    } finally {
+        btn.disabled = false;
+        btn.innerText = "✨ ASK GEMINI AI";
+    }
+};
+
+window.updatePreview = (id) => { document.getElementById(`pa-${id}`).innerText = document.getElementById(`ai-${id}`).value; };
+window.mark = (id) => {
+    ['A','B','C','D'].forEach(l => document.getElementById(`opt${l}-${id}`).classList.remove('selected-ans'));
+    let sel = document.querySelector(`input[name="r${id}"]:checked`);
+    if(sel) document.getElementById(`opt${sel.value}-${id}`).classList.add('selected-ans');
+};
+window.removeQ = (id) => {
+    document.getElementById(`card-${id}`).remove();
+    editors = editors.filter(e => e.id !== id);
+};
+
+window.saveExam = async () => {
+    let sub = document.getElementById('subject').value.trim();
+    let yr = document.getElementById('year').value.trim();
+    if(!sub || !yr) return alert("Enter Subject/Year");
+
+    let data = editors.map(e => {
+        let card = document.getElementById(`card-${e.id}`);
+        return {
+            text: e.q.root.innerHTML,
+            optA: e.optA.root.innerHTML,
+            optB: e.optB.root.innerHTML,
+            optC: e.optC.root.innerHTML,
+            optD: e.optD.root.innerHTML,
+            ans: card.querySelector('input[type=radio]:checked')?.value,
+            explanation: document.getElementById(`ai-${e.id}`).value
+        };
+    }).filter(q => q.ans && q.text !== "<p><br></p>");
+
+    try {
+        let key = sub.toLowerCase().replace(/ /g,'_') + '_' + yr;
+        await set(ref(db, `exams/${key}`), data);
+        alert("Exam Published Successfully!");
+    } catch(err) { alert(err.message); }
+};
+
+window.onload = addQ;
+</script>
+</body>
+</html>
